@@ -212,6 +212,14 @@ CSV/JSON には、各輪郭について以下の値を記録する。
 - `poly_arc_length_px`: 多項式中心線に基づく弧長
 - `pca_length_px`: PCA 主軸方向の射影長
 
+### 細胞長 overlay の例
+
+以下は `nd2totiff_processed/0.tif` に対して `canny=135` を適用した場合の細胞長 overlay 例である。
+
+![Cell length overlay example](docs/celllength_canny135_frame0_overlay.png)
+
+画像左上には、適用した Canny threshold と検出された輪郭数を表示している。この例では `Canny=135`、`contours=48` である。各細胞候補の輪郭は元画像上に緑色で重畳し、その近傍に赤字で `poly_arc_length_px` を表示している。右下の `10 um` スケールバーは視覚確認用であり、現在の overlay 画像では長さラベル自体は pixel 単位の推定値である。
+
 ## 実行方法
 
 依存関係をインストールする。
