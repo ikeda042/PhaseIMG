@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import csv
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
 import cv2
 import numpy as np
 
+from .search_canny_param_component import SearchCannyParamComponent
+
 
 ContourLike = Sequence[Sequence[float]] | np.ndarray
+CellLengthResult = dict[str, str | int | float]
 
 
 @dataclass(frozen=True)
@@ -320,3 +326,158 @@ class CellLengthCalculator:
 
 def calculate_cell_length_px(contour: ContourLike) -> float:
     return CellLengthCalculator().calculate(contour)
+
+
+class CellLengthAnalysisComponent:
+    base_dir: Path = Path(__file__).resolve().parent.parent
+    output_dir: str = "celllength_results"
+    default_image_path: str = "nd2totiff_processed/0.tif"
+    default_canny_param_int: int = 85
+    csv_columns: tuple[str, ...] = (
+        "image",
+        "canny_param",
+        "contour_index",
+        "area_px2",
+        "perimeter_px",
+        "bbox_x",
+        "bbox_y",
+        "bbox_w",
+        "bbox_h",
+        "poly_arc_length_px",
+        "pca_length_px",
+    )
+
+    @classmethod
+    def get_project_path(cls, path: str | Path) -> Path:
+        resolved_path = Path(path)
+        if resolved_path.is_absolute():
+            return resolved_path
+        return cls.base_dir / resolved_path
+
+    @classmethod
+    def get_frame_label(cls, image_path: str | Path) -> str:
+        stem = Path(image_path).stem
+        return f"frame{stem}" if stem.isdigit() else stem
+
+    @classmethod
+    def build_output_paths(
+        cls,
+        image_path: str | Path,
+        canny_param_int: int,
+        output_dir: str | Path | None = None,
+    ) -> tuple[Path, Path, Path]:
+        output_path = cls.get_project_path(output_dir or cls.output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        frame_label = cls.get_frame_label(image_path)
+        prefix = f"celllength_canny{canny_param_int}_{frame_label}"
+        return (
+            output_path / f"{prefix}.csv",
+            output_path / f"{prefix}.json",
+            output_path / f"{prefix}_overlay.png",
+        )
+
+    @classmethod
+    def calculate_results(
+        cls,
+        image_path: str | Path,
+        canny_param_int: int,
+    ) -> tuple[list[CellLengthResult], np.ndarray, list[np.ndarray]]:
+        project_image_path = cls.get_project_path(image_path)
+        image = SearchCannyParamComponent.load_image(project_image_path)
+        contours = SearchCannyParamComponent.get_contour(image, canny_param_int)
+        calculator = CellLengthCalculator()
+        rows: list[CellLengthResult] = []
+
+        for contour_index, contour in enumerate(contours):
+            bbox_x: int
+            bbox_y: int
+            bbox_w: int
+            bbox_h: int
+            bbox_x, bbox_y, bbox_w, bbox_h = cv2.boundingRect(contour)
+            rows.append(
+                {
+                    "image": str(Path(image_path)),
+                    "canny_param": canny_param_int,
+                    "contour_index": contour_index,
+                    "area_px2": float(cv2.contourArea(contour)),
+                    "perimeter_px": float(cv2.arcLength(contour, True)),
+                    "bbox_x": int(bbox_x),
+                    "bbox_y": int(bbox_y),
+                    "bbox_w": int(bbox_w),
+                    "bbox_h": int(bbox_h),
+                    "poly_arc_length_px": calculator.calculate(contour),
+                    "pca_length_px": calculator.calculate_pca_length(contour),
+                }
+            )
+
+        return rows, image, contours
+
+    @classmethod
+    def write_csv(cls, csv_path: Path, rows: list[CellLengthResult]) -> None:
+        with csv_path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=cls.csv_columns)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    @classmethod
+    def write_json(cls, json_path: Path, rows: list[CellLengthResult]) -> None:
+        with json_path.open("w") as f:
+            json.dump(rows, f, indent=2)
+
+    @classmethod
+    def write_overlay(
+        cls,
+        overlay_path: Path,
+        image: np.ndarray,
+        contours: list[np.ndarray],
+        rows: list[CellLengthResult],
+    ) -> None:
+        overlay = image.copy()
+        cv2.drawContours(overlay, contours, -1, (0, 255, 0), 1)
+        row: CellLengthResult
+        for row in rows:
+            label = f"{row['contour_index']}: {row['poly_arc_length_px']:.1f}px"
+            cv2.putText(
+                overlay,
+                label,
+                (int(row["bbox_x"]), max(0, int(row["bbox_y"]) - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 255, 0),
+                1,
+                cv2.LINE_AA,
+            )
+        cv2.imwrite(str(overlay_path), overlay)
+
+    @classmethod
+    def analyze_image(
+        cls,
+        image_path: str | Path | None = None,
+        canny_param_int: int | None = None,
+        output_dir: str | Path | None = None,
+    ) -> list[CellLengthResult]:
+        target_image_path = image_path or cls.default_image_path
+        target_canny_param_int = canny_param_int or cls.default_canny_param_int
+        csv_path, json_path, overlay_path = cls.build_output_paths(
+            target_image_path,
+            target_canny_param_int,
+            output_dir,
+        )
+        rows: list[CellLengthResult]
+        image: np.ndarray
+        contours: list[np.ndarray]
+        rows, image, contours = cls.calculate_results(
+            target_image_path, target_canny_param_int
+        )
+        cls.write_csv(csv_path, rows)
+        cls.write_json(json_path, rows)
+        cls.write_overlay(overlay_path, image, contours, rows)
+        return rows
+
+    @classmethod
+    def run_default(cls) -> list[CellLengthResult]:
+        return cls.analyze_image(
+            cls.default_image_path,
+            cls.default_canny_param_int,
+            cls.output_dir,
+        )
