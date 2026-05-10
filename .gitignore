@@ -1,0 +1,8 @@
+venv/
+*.nd2
+nd2totiff/
+nd2totiff_processed/
+*.avi
+tmp/
+result.gif
+__pycache__/
