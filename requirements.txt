@@ -1,0 +1,8 @@
+imageio
+matplotlib
+nd2
+numpy
+opencv-python
+pillow
+pydantic
+tqdm

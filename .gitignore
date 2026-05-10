@@ -1,4 +1,5 @@
 venv/
+.venv/
 *.nd2
 nd2totiff/
 nd2totiff_processed/
